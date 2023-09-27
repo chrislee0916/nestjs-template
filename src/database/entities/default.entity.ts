@@ -4,10 +4,10 @@ import { Document } from 'mongoose';
 @Schema()
 export class DefaultSchema extends Document {
   @Prop({
-    type: Boolean,
-    default: false,
+    type: Number,
+    default: null,
   })
-  trashed: boolean;
+  deletedAt: number;
 
   @Prop({
     type: Number,

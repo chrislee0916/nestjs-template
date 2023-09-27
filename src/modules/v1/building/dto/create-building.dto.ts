@@ -7,39 +7,41 @@ export class CreateBuildingDto {
   readonly area: string;
   @IsString()
   @IsOptional()
-  street?: string;
+  readonly street?: string;
   @IsNumber()
   @IsOptional()
-  section?: number;
+  readonly section?: number;
   @IsNumber()
   @IsOptional()
-  lane?: number;
+  readonly lane?: number;
   @IsNumber()
   @IsOptional()
-  lane1?: number;
+  readonly lane1?: number;
   @IsNumber()
   @IsOptional()
-  alley?: number;
+  readonly alley?: number;
   @IsNumber()
   @IsOptional()
-  alley1?: number;
-  small_alley?: number;
+  readonly alley1?: number;
+  @IsNumber()
+  @IsOptional()
+  readonly small_alley?: number;
   @IsString()
   @IsOptional()
-  district?: string;
+  readonly district?: string;
   @IsNumber()
   @IsOptional()
-  number?: number;
+  readonly number?: number;
   @IsNumber()
   @IsOptional()
-  number1?: number;
+  readonly number1?: number;
   @IsNumber()
   @IsOptional()
-  number2?: number;
+  readonly number2?: number;
   @IsNumber()
   @IsOptional()
-  floor?: number;
+  readonly floor?: number;
   @IsNumber()
   @IsOptional()
-  ext?: number;
+  readonly ext?: number;
 }

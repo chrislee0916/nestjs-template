@@ -32,13 +32,7 @@ import { CommonModule } from './common/common.module';
     DatabaseModule,
     CommonModule,
     Module_v1,
-  ],
-  providers: [
-    {
-      provide: APP_GUARD,
-      useClass: AuthGuard
-    }
-  ],
+  ]
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {

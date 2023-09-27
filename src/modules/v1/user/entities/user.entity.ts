@@ -1,4 +1,5 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { CallbackWithoutResultAndOptionalError, Model, SaveOptions } from "mongoose";
 import { DefaultSchema } from "src/database/entities/default.entity";
 
 @Schema({
@@ -9,7 +10,7 @@ import { DefaultSchema } from "src/database/entities/default.entity";
 })
 export class User extends DefaultSchema {
   @Prop({
-    require: true,
+    required: true,
   })
   username: string;
 }
