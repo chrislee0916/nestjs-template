@@ -2,6 +2,8 @@ import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { CallbackWithoutResultAndOptionalError, Model, SaveOptions } from "mongoose";
 import { DefaultSchema } from "src/database/entities/default.entity";
 
+export type UserDocument = User & Document;
+
 @Schema({
   timestamps: true,
   id: false,

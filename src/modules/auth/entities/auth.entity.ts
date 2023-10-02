@@ -2,6 +2,8 @@ import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
 import { Schema as MongooseSchema } from "mongoose";
 import { DefaultSchema } from "src/database/entities/default.entity";
 
+export type AuthDocument = Auth & Document;
+
 @Schema({
   timestamps: true,
   id: false,

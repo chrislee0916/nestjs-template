@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
 import { UserModule } from './user/user.module';
 import { BuildingModule } from './building/building.module';
+import { BuildingBasicModule } from './building-basic/building-basic.module';
 
 @Module({
-  imports: [UserModule, BuildingModule],
+  imports: [UserModule, BuildingModule, BuildingBasicModule],
 })
 export class Module_v1 {}

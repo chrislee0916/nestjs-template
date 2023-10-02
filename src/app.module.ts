@@ -2,7 +2,6 @@ import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/c
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ApiLogMiddleware } from './common/middleware/api-log.middleware';
-import { ParseBaseQueryMiddleware } from './common/middleware/parse-base-query.middleware';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
@@ -34,8 +33,4 @@ import { CommonModule } from './common/common.module';
     Module_v1,
   ]
 })
-export class AppModule implements NestModule {
-  configure(consumer: MiddlewareConsumer) {
-    consumer.apply(ParseBaseQueryMiddleware).forRoutes('*')
-  }
-}
+export class AppModule {}

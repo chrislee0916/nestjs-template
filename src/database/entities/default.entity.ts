@@ -1,8 +1,7 @@
 import { Prop, Schema } from '@nestjs/mongoose';
-import { Document } from 'mongoose';
 
 @Schema()
-export class DefaultSchema extends Document {
+export class DefaultSchema {
   @Prop({
     type: Number,
     default: null,

@@ -3,17 +3,21 @@ import { CreateBuildingDto } from './dto/create-building.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { InjectModel } from '@nestjs/mongoose';
-import { Building } from './entities/building.entity';
+import { Building, BuildingDocument } from './entities/building.entity';
 import { Model } from 'mongoose';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom, lastValueFrom } from 'rxjs';
-import { AxiosError } from 'axios';
+import { AxiosError, AxiosResponse } from 'axios';
 import { ConfigService } from '@nestjs/config';
+import { BuildingBasic } from '../building-basic/entities/building-basic.entity';
+import { BuildingBasicService } from '../building-basic/building-basic.service';
+import { CreateBuildingBasicDto } from '../building-basic/dto/create-building-basic.dto';
 
 @Injectable()
 export class BuildingService extends DatabaseService {
   constructor(
-    @InjectModel(Building.name)private readonly buildingModel: Model<Building>,
+    @InjectModel(Building.name) private readonly buildingModel: Model<BuildingDocument>,
+    private readonly buildingBasicService: BuildingBasicService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
   ){
@@ -25,13 +29,12 @@ export class BuildingService extends DatabaseService {
       },
       async (error) => {
         const axiosErr = error as AxiosError;
-        const { message, code, response } = axiosErr
         console.log(
           '錯誤 error :',
-          response?.data ? response?.data : response,
+          axiosErr.response?.data ? axiosErr.response?.data : axiosErr.response,
         );
-        return { message, code, response }
-      },
+        throw new HttpException(axiosErr.message || axiosErr.code || this.configService.get('ERR_BAD_REQUEST'), axiosErr.response.status || 400)
+      }
     );
   }
 
@@ -41,14 +44,18 @@ export class BuildingService extends DatabaseService {
 
       // 打 api 取得 建號
       // const buildNo = await this.getBuildNo(address);
-
       const buildNo = {
-        unit: 'asd',
-        sec: 'asd',
-        no: 'asdasd'
+        unit: 'unit',
+        sec: 'sec',
+        no: 'no'
       }
       // 打其他api 取得資料
       // 實作....
+
+      const createBuildingBasicDto: CreateBuildingBasicDto = {
+        name: 'asdasd'
+      }
+      const buildingBasic =  await this.buildingBasicService.create(createBuildingBasicDto)
 
       return this.buildingModel.create({
         properties: createBuildingDto,
@@ -57,50 +64,44 @@ export class BuildingService extends DatabaseService {
           unit: buildNo.unit,
           sec: buildNo.sec,
           no: buildNo.no
-        }
+        },
+        basic: buildingBasic._id.toString()
       })
-
-
   }
 
-  findAll() {
-    return `This action returns all building`;
-  }
-
-  findOne(id: number) {
-    return `This action returns a #${id} building`;
-  }
-
-  update(id: number, updateBuildingDto: UpdateBuildingDto) {
-    return `This action updates a #${id} building`;
-  }
-
-  remove(id: number) {
-    return `This action removes a #${id} building`;
+  findOne(id: string) {
+    return this.buildingModel.findOne({
+      _id: id,
+      deletedAt: null,
+    }).populate('basic').exec()
   }
 
   // 取得建號
   private async getBuildNo(address: string): Promise<{ unit: string, sec: string, no: string}> {
+
     const res = await lastValueFrom(this.httpService.post('https://api.land.moi.gov.tw/cp/api/AddressQueryBuilding/1.0/QueryByAddress', [{
       CITY: 'F',
       ADDRESS: address
     }], {
       headers: {
-        Authorization: `Bearer ${this.configService.get('')}`,
+        Authorization: `Bearer ${this.configService.get('LAND_ACCESS_TOKEN')}`,
       }
     }))
+
     if(!res.data?.STATUS) {
-      throw new HttpException(this.configService.get('ERR_BAD_REQUEST'), HttpStatus.BAD_REQUEST)
+      throw new HttpException(this.configService.get('ERR_BAD_REQUEST'), HttpStatus.BAD_REQUEST);
     }
 
-    const data = res.data.RESPONSE[0].BLDGREG
-    if(!data) throw new HttpException(this.configService.get('ERR_RESOURCE_NOT_FOUND'), HttpStatus.NOT_FOUND)
+    const data = res.data.RESPONSE[0].BLDGREG;
+    if(!data) throw new HttpException(this.configService.get('ERR_RESOURCE_NOT_FOUND'), HttpStatus.NOT_FOUND);
     const { UNIT, SEC, NO } = data[0];
     return {
       unit: UNIT,
       sec: SEC,
       no: NO
     }
+
+
   }
 
   // 處理地址

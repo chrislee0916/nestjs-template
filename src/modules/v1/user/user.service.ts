@@ -3,12 +3,12 @@ import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { InjectModel } from '@nestjs/mongoose';
-import { User } from './entities/user.entity';
+import { User, UserDocument } from './entities/user.entity';
 import { Model } from 'mongoose';
 
 @Injectable()
 export class UserService extends DatabaseService {
-  constructor(@InjectModel(User.name) private DB: Model<User>) {
+  constructor(@InjectModel(User.name) private DB: Model<UserDocument>) {
     super(DB);
   }
 

@@ -5,16 +5,20 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Building, BuildingSchema } from './entities/building.entity';
 import { HttpModule } from '@nestjs/axios';
 import { ConfigModule } from '@nestjs/config';
+import { BuildingBasicModule } from '../building-basic/building-basic.module';
+import { BuildingBasicService } from '../building-basic/building-basic.service';
+import { BuildingBasic, BuildingBasicSchema } from '../building-basic/entities/building-basic.entity';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: Building.name, schema: BuildingSchema }
+      { name: Building.name, schema: BuildingSchema },
+      { name: BuildingBasic.name, schema: BuildingBasicSchema }
     ]),
     HttpModule,
     ConfigModule
   ],
   controllers: [BuildingController],
-  providers: [BuildingService],
+  providers: [BuildingService, BuildingBasicService],
 })
 export class BuildingModule {}

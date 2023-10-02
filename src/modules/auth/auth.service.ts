@@ -3,7 +3,7 @@ import { CreateAuthDto } from './dto/create-auth.dto';
 import { UpdateAuthDto } from './dto/update-auth.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { InjectModel } from '@nestjs/mongoose';
-import { Auth } from './entities/auth.entity';
+import { Auth, AuthDocument } from './entities/auth.entity';
 import { Model } from 'mongoose';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -12,7 +12,7 @@ import { UserService } from '../v1/user/user.service';
 @Injectable()
 export class AuthService extends DatabaseService {
   constructor(
-    @InjectModel(Auth.name) private DB: Model<Auth>,
+    @InjectModel(Auth.name) private DB: Model<AuthDocument>,
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly userService: UserService,
