@@ -12,6 +12,7 @@ import { AuthGuard } from './common/guard/auth.guard';
 import { BuildingModule } from './modules/v1/building/building.module';
 import { Module_v1 } from './modules/v1/v1.module';
 import { CommonModule } from './common/common.module';
+import { ScheduleModule } from '@nestjs/schedule';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { CommonModule } from './common/common.module';
           ? ['.env.test.local', '.env.test', '.env']
           : '.env',
     }),
+    ScheduleModule.forRoot(),
     AuthModule,
     DatabaseModule,
     CommonModule,

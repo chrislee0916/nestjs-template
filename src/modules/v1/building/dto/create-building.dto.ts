@@ -3,6 +3,9 @@ import { IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
 export class CreateBuildingDto {
   @IsString()
   @IsNotEmpty()
+  readonly code: string;
+  @IsString()
+  @IsNotEmpty()
   readonly city: string;
   @IsString()
   @IsNotEmpty()

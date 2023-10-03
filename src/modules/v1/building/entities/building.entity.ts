@@ -71,14 +71,18 @@ class Properties {
   toObject: { virtuals: true, getters: true },
 })
 export class Building extends DefaultSchema {
-  @Prop()
-  properties: Properties;
+  // @Prop()
+  // properties: Properties;
 
-  @Prop({ index: true })
+  @Prop({
+    index: true,
+    // unique: true
+  })
   address: string;
 
   @Prop({
-    index: true
+    index: true,
+    unique: true
   })
   buildNo: BuildNo
 
