@@ -8,6 +8,7 @@ import { ConfigModule } from '@nestjs/config';
 import { BuildingBasicModule } from '../building-basic/building-basic.module';
 import { BuildingBasicService } from '../building-basic/building-basic.service';
 import { BuildingBasic, BuildingBasicSchema } from '../building-basic/entities/building-basic.entity';
+import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { BuildingBasic, BuildingBasicSchema } from '../building-basic/entities/b
       { name: Building.name, schema: BuildingSchema },
       { name: BuildingBasic.name, schema: BuildingBasicSchema }
     ]),
+    // CacheModule.register(),
     HttpModule,
     ConfigModule
   ],

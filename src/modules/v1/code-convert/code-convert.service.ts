@@ -1,15 +1,18 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
 import { lastValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { CodeConvert, CodeConvertDocument, CodeConvertSchema } from './entities/code-convert.entity';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
+import { CACHE_MANAGER } from '@nestjs/cache-manager';
+import { Cache } from 'cache-manager';
 
 @Injectable()
 export class CodeConvertService implements OnModuleInit{
   constructor(
     @InjectModel(CodeConvert.name) private readonly codeConvertModel: Model<CodeConvertDocument>,
+    @Inject(CACHE_MANAGER) private cacheManager: Cache,
     private readonly httpService: HttpService
   ){}
 
@@ -36,17 +39,19 @@ export class CodeConvertService implements OnModuleInit{
       duration: {},
       termination: {},
       rtogh: {},
-      mainUsage: {},
+      purpose: {},
       materials: {},
       accessoryUsage: {},
       rgAllCode: {}
     })
+    let keys = [];
 
     // 查詢縣市代碼
     const cityCodes = await this.getCityCode();
     cityCodes.forEach( item => {
       codeConvert.city[item.CODE] = item.NAME
     })
+    keys.push('city');
 
     // 查詢鄉鎮市區代碼
     const townCodes = await this.getTownCode();
@@ -56,6 +61,7 @@ export class CodeConvertService implements OnModuleInit{
         codeConvert.town[UNIT] = { code: CODE, name: NAME };
       });
     });
+    keys.push('town');
 
     // 查詢地政事務所代碼
     const unitCodes = await this.getUnitCode();
@@ -65,6 +71,7 @@ export class CodeConvertService implements OnModuleInit{
         codeConvert.unit[CODE] = NAME;
       });
     });
+    keys.push('unit');
 
     // 查詢非都市土地使用分區代碼
     const zoneCodes = await this.getZoneCode();
@@ -72,6 +79,7 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.zone[CODE] = NAME;
     });
+    keys.push('zone');
 
     // 查詢非都市土地使用地類別代碼
     const zoneDetailCodes = await this.getZoneDetailCode();
@@ -79,6 +87,7 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.zoneDetail[CODE] = NAME;
     });
+    keys.push('zoneDetail');
 
 
     // 查詢收件字代碼
@@ -94,7 +103,9 @@ export class CodeConvertService implements OnModuleInit{
       return Promise.resolve()
     })
     await Promise.all(receiptNumberPromises)
+    keys.push('receiptNumber');
 
+    await new Promise(resolve => { setTimeout(() => { resolve('') }, 10000) })
 
     // 查詢登記原因代碼
     const reasonPromises = units.map( async (unit) => {
@@ -108,6 +119,8 @@ export class CodeConvertService implements OnModuleInit{
       return Promise.resolve()
     })
     await Promise.all(reasonPromises)
+    keys.push('reason');
+    await new Promise(resolve => { setTimeout(() => { resolve('') }, 10000) })
 
     // 權利人類別
     const obligeeTypeCodes = await this.getObligeeTypeCode();
@@ -115,6 +128,7 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.obligeeType[CODE] = NAME;
     });
+    keys.push('obligeeType');
 
     // 權利範圍類別
     const rightsCodes = await this.getRightsCode();
@@ -122,6 +136,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.rights[CODE] = NAME;
     });
+    keys.push('rights');
+
 
     // 權狀年字號
     const certificatePromises = units.map( async (unit) => {
@@ -134,7 +150,12 @@ export class CodeConvertService implements OnModuleInit{
       })
       return Promise.resolve()
     })
-    await Promise.all(certificatePromises)
+    await Promise.all(certificatePromises);
+    keys.push('certificate');
+
+    await new Promise(resolve => { setTimeout(() => { resolve('') }, 10000) })
+
+
 
     // 債權權利範圍類別
     const loanRightsRangeCodes = await this.getLoanRightsRangeCode();
@@ -142,6 +163,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.loanRightsRange[CODE] = NAME;
     });
+    keys.push('loanRightsRange');
+
 
     // 權利種類&標的種類
     const rightsAndTypesCodes = await this.getRightsAndTypesCode();
@@ -149,6 +172,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.rightsAndTypes[CODE] = NAME;
     });
+    keys.push('rightsAndTypes');
+
 
     // 他項權利檔權利價值類別
     const rightsValueCodes = await this.getRightsValueCode();
@@ -156,6 +181,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.rightsValue[CODE] = NAME;
     });
+    keys.push('rightsValue');
+
 
     // 他項權利檔存續期間類別
     const durationCodes = await this.getDuration();
@@ -163,6 +190,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.duration[CODE] = NAME;
     });
+    keys.push('duration');
+
 
     // 他項權利檔清償日期類別
     const terminationCodes = await this.getTermination();
@@ -170,6 +199,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.termination[CODE] = NAME;
     });
+    keys.push('termination');
+
 
     // 他項權利檔利息(率)或地租類別&遲延利息(率)類別&違約金類別
     const rtoghCodes = await this.getRTOGH();
@@ -177,13 +208,17 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.rtogh[CODE] = NAME;
     });
+    keys.push('rtogh');
+
 
     // 建物主要用途
-    const mainUsageCodes = await this.getMainUsage();
-    mainUsageCodes.forEach( item => {
+    const purposeCodes = await this.getPurpose();
+    purposeCodes.forEach( item => {
       const { CODE, NAME } = item;
-      codeConvert.mainUsage[CODE] = NAME;
+      codeConvert.purpose[CODE] = NAME;
     });
+    keys.push('purpose');
+
 
     // 建物主要建材
     const materialsCodes = await this.getMaterials();
@@ -191,6 +226,8 @@ export class CodeConvertService implements OnModuleInit{
       const { CODE, NAME } = item;
       codeConvert.materials[CODE] = NAME;
     });
+    keys.push('materials');
+
 
     // 建物分層或附屬建物用途
     const accessoryUsagePromises = units.map( async (unit) => {
@@ -203,7 +240,11 @@ export class CodeConvertService implements OnModuleInit{
       })
       return Promise.resolve()
     })
-    await Promise.all(accessoryUsagePromises)
+    await Promise.all(accessoryUsagePromises);
+    keys.push('accessoryUsage');
+
+    await new Promise(resolve => { setTimeout(() => { resolve('') }, 10000) })
+
 
     // 其他登記事項代碼
     const rgAllCodePromises = units.map( async (unit) => {
@@ -217,13 +258,17 @@ export class CodeConvertService implements OnModuleInit{
       return Promise.resolve();
     })
     await Promise.all(rgAllCodePromises)
+    keys.push('rgAllCode');
 
+    let res = await codeConvert.save();
 
-    return codeConvert.save()
+    const cachePromises = keys.map(key => this.cacheManager.set(key, res[key] || ''));
+    await Promise.all(cachePromises);
 
+    return 'update code-convert success'
   }
 
-  findOne()  {
+  findOne(){
     return this.codeConvertModel.findOne().exec();
   }
 
@@ -308,7 +353,7 @@ export class CodeConvertService implements OnModuleInit{
     return data.RESPONSE
   }
 
-  private async getMainUsage(): Promise<Array<any>> {
+  private async getPurpose(): Promise<Array<any>> {
     const { data } = await lastValueFrom(this.httpService.post('https://openapi.land.moi.gov.tw/WEBAPI/LandQuery/QueryMainUsage', [{}]));
     return data.RESPONSE
   }

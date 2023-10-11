@@ -1,18 +1,14 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
-import { AppController } from './app.controller';
-import { AppService } from './app.service';
-import { ApiLogMiddleware } from './common/middleware/api-log.middleware';
-import { MongooseModule } from '@nestjs/mongoose';
-import { ConfigModule } from '@nestjs/config';
+import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthModule } from './modules/auth/auth.module';
-import { UserModule } from './modules/v1/user/user.module';
 import { DatabaseModule } from './database/database.module';
-import { APP_GUARD } from '@nestjs/core';
-import { AuthGuard } from './common/guard/auth.guard';
-import { BuildingModule } from './modules/v1/building/building.module';
 import { Module_v1 } from './modules/v1/v1.module';
 import { CommonModule } from './common/common.module';
 import { ScheduleModule } from '@nestjs/schedule';
+import { CacheModule, CacheStore } from '@nestjs/cache-manager';
+import { redisStore } from 'cache-manager-redis-store';
+import type { RedisClientOptions } from 'redis';
+
 
 @Module({
   imports: [
@@ -29,10 +25,38 @@ import { ScheduleModule } from '@nestjs/schedule';
           : '.env',
     }),
     ScheduleModule.forRoot(),
+    // CacheModule.register({
+    //   isGlobal: true,
+    //   // @ts-ignore
+    //   store: async () => await redisStore({
+    //     socket: {
+    //       host: 'localhost',
+    //       port: 6379,
+    //     },
+    //     password: '9905'
+    //   })
+    // }),
+    CacheModule.registerAsync<RedisClientOptions>({
+      isGlobal: true,
+      useFactory: async (configService: ConfigService) => {
+        const store = await redisStore({
+          socket: {
+            host: configService.get('CACHE_HOST'),
+            port: configService.get('CACHE_PORT')
+          },
+          password: configService.get('CACHE_PASSWORD'),
+        })
+        return {
+          store: store as unknown as CacheStore,
+          ttl: 0
+        }
+      },
+      inject: [ConfigService]
+    }),
     AuthModule,
     DatabaseModule,
     CommonModule,
     Module_v1,
-  ]
+  ],
 })
 export class AppModule {}

@@ -13,6 +13,7 @@ import { CodeConvert, CodeConvertSchema } from './entities/code-convert.entity';
     HttpModule
   ],
   controllers: [CodeConvertController],
+  exports: [CodeConvertService],
   providers: [CodeConvertService],
 })
 export class CodeConvertModule {}

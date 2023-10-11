@@ -7,6 +7,10 @@ const configService = new ConfigService();
 export interface IDatabase {
   ensureExist(Id: string): Promise<DatabaseResponse>;
 
+  softFindOne(filter: object): Promise<DatabaseResponse>;
+
+  softFind(filter: object): Promise<DatabaseResponse>;
+
   delete(Id: string): Promise<DatabaseResponse>;
 
   isObjectId(Id: string): boolean;
@@ -32,19 +36,27 @@ export class DatabaseService implements IDatabase {
     const doc = await this.DBModel.findOne()
       .where('_id')
       .equals(id)
-      .where('trashed')
-      .equals(false)
+      .where('deletedAt')
+      .equals(null)
       .exec();
 
-    Logger.debug(`結果 : ${!!doc} `, `驗證ＩＤ : ${id}`);
+    Logger.debug(`結果 : ${!!doc} `, `驗證ＩＤ : ${id}`)
 
     if (!doc || doc._id.equals(id) === false)
       throw new HttpException(
         configService.get('ERR_RESOURCE_NOT_FOUND'),
-        HttpStatus.BAD_REQUEST,
+        HttpStatus.NOT_FOUND,
       );
 
     return doc;
+  }
+
+  async softFindOne(filter: object) {
+    return this.DBModel.findOne({ ...filter, deleteAt: null }).exec();
+  }
+
+  async softFind(filter: object) {
+    return this.DBModel.find({ ...filter, deleteAt: null }).exec();
   }
 
   async delete(id: string) {

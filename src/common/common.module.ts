@@ -1,9 +1,10 @@
 import { MiddlewareConsumer, Module, NestModule, RequestMethod, ValidationPipe } from '@nestjs/common';
-import { APP_FILTER, APP_GUARD, APP_PIPE } from '@nestjs/core';
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { AuthGuard } from './guard/auth.guard';
 import { ParseBaseQueryMiddleware } from './middleware/parse-base-query.middleware';
 import { AuthModule } from 'src/modules/auth/auth.module';
 import { HttpExceptionFilter } from './filters/http-exception.filter';
+import { LoggingInterceptor } from './interceptor/logging.interceptor';
 
 @Module({
     imports: [AuthModule],
@@ -22,6 +23,10 @@ import { HttpExceptionFilter } from './filters/http-exception.filter';
             whitelist: true,
             transform: true
           })
+        },
+        {
+          provide: APP_INTERCEPTOR,
+          useClass: LoggingInterceptor
         }
     ]
 

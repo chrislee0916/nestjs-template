@@ -60,7 +60,7 @@ export class CodeConvert extends DefaultSchema {
   rtogh: Record<string, string>;
 
   @Prop({ type: MongooseSchema.Types.Mixed })
-  mainUsage: Record<string, string>;
+  purpose: Record<string, string>;
 
   @Prop({ type: MongooseSchema.Types.Mixed })
   materials: Record<string, string>;
