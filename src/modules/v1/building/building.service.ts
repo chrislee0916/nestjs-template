@@ -523,7 +523,7 @@ export class BuildingService extends DatabaseService {
       accessoryBuilding: accessoryBuilding, // 各附屬建物面積
       sharedArea: sharedArea, //公設合計面積
       shareParkArea: shareParkArea, // 車位合計面積
-      totalArea: totalArea // 建物總面積
+      totalArea: totalArea, // 建物總面積
     }
   }
 
