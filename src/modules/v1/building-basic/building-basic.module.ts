@@ -10,7 +10,7 @@ import { BuildingBasic, BuildingBasicSchema } from './entities/building-basic.en
       { name: BuildingBasic.name, schema: BuildingBasicSchema}
     ])
   ],
-  controllers: [BuildingBasicController],
+  // controllers: [BuildingBasicController],
   providers: [BuildingBasicService],
 })
 export class BuildingBasicModule {}

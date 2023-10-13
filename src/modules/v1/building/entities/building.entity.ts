@@ -1,6 +1,7 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
-import { Schema as MongooseSchema} from "mongoose";
+import { Schema as MongooseSchema, Types} from "mongoose";
 import { DefaultSchema } from "src/database/entities/default.entity";
+import { BuildingBasicDocument } from "../../building-basic/entities/building-basic.entity";
 
 export type BuildingDocument = Building & Document;
 
@@ -15,54 +16,6 @@ export class BuildNo {
   @Prop({ required: true })
   no: string;
 }
-
-class Properties {
-  @Prop({ required: true })
-  city: string;
-
-  @Prop({ required: true })
-  area: string;
-
-  @Prop()
-  street: string;
-
-  @Prop()
-  section: number;
-
-  @Prop()
-  lane: number;
-
-  @Prop()
-  lane1: number;
-
-  @Prop()
-  alley: number;
-
-  @Prop()
-  alley1: number;
-
-  @Prop()
-  small_alley: number;
-
-  @Prop()
-  district: number;
-
-  @Prop()
-  number: number;
-
-  @Prop()
-  number1: number;
-
-  @Prop()
-  number2: number;
-
-  @Prop()
-  floor: number;
-
-  @Prop()
-  ext: number;
-}
-
 
 @Schema({
   timestamps: true,
@@ -89,9 +42,9 @@ export class Building extends DefaultSchema {
   @Prop({
     type: MongooseSchema.Types.ObjectId,
     ref: 'BuildingBasic',
-    required: true
+    required: false
   })
-  basic: string;
+  basic: Types.ObjectId;
 }
 
 export const BuildingSchema = SchemaFactory.createForClass(Building);

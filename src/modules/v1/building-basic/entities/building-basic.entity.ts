@@ -1,6 +1,6 @@
 import { Prop, Schema, SchemaFactory } from "@nestjs/mongoose";
+import { Schema as MongooseSchema } from "mongoose";
 import { DefaultSchema } from "src/database/entities/default.entity";
-import { BuildNo } from "../../building/entities/building.entity";
 
 export type BuildingBasicDocument = BuildingBasic & Document;
 
@@ -11,16 +11,15 @@ export type BuildingBasicDocument = BuildingBasic & Document;
   toObject: { virtuals: true, getters: true },
 })
 export class BuildingBasic extends DefaultSchema {
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  label: Record<string, any>
 
-  @Prop({
-    index: true
-  })
-  buildNo: BuildNo;
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  own: Record<string, any>
 
-  @Prop({
-    required: true
-  })
-  name: string;
+  @Prop({ type: MongooseSchema.Types.Mixed })
+  other: Record<string, any>
+
 }
 
 export const BuildingBasicSchema = SchemaFactory.createForClass(BuildingBasic)

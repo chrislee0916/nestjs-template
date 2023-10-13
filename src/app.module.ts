@@ -25,17 +25,6 @@ import type { RedisClientOptions } from 'redis';
           : '.env',
     }),
     ScheduleModule.forRoot(),
-    // CacheModule.register({
-    //   isGlobal: true,
-    //   // @ts-ignore
-    //   store: async () => await redisStore({
-    //     socket: {
-    //       host: 'localhost',
-    //       port: 6379,
-    //     },
-    //     password: '9905'
-    //   })
-    // }),
     CacheModule.registerAsync<RedisClientOptions>({
       isGlobal: true,
       useFactory: async (configService: ConfigService) => {

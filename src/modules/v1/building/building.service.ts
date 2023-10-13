@@ -1,25 +1,31 @@
-import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
+import { HttpException, HttpStatus, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { UpdateBuildingDto } from './dto/update-building.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Building, BuildingDocument, BuildingSchema } from './entities/building.entity';
-import { Model } from 'mongoose';
+import { Document, Model, Types } from 'mongoose';
 import { HttpService } from '@nestjs/axios';
 import { catchError, lastValueFrom, map, tap } from 'rxjs';
-import { AxiosError } from 'axios';
+import axios, { AxiosError } from 'axios';
 import { ConfigService } from '@nestjs/config';
 import { BuildingBasic } from '../building-basic/entities/building-basic.entity';
 import { BuildingBasicService } from '../building-basic/building-basic.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { CreateBuildingBasicDto } from '../building-basic/dto/create-building-basic.dto';
+import { Cron, CronExpression } from '@nestjs/schedule';
+import { CodeConvertService } from '../code-convert/code-convert.service';
+import { ShowBuildingDto, ShowDetailBuildingDto } from './dto/show-building.dto';
+import { ListBuildingDto } from './dto/list-building.dto';
 
 @Injectable()
-export class BuildingService extends DatabaseService {
+export class BuildingService extends DatabaseService implements OnModuleInit {
+  private landAccessToken = '';
+
   constructor(
     @InjectModel(Building.name) private readonly buildingModel: Model<BuildingDocument>,
-    @Inject(CACHE_MANAGER) private cacheManager: Cache,
+    private readonly codeConvertService: CodeConvertService,
     private readonly buildingBasicService: BuildingBasicService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
@@ -32,48 +38,69 @@ export class BuildingService extends DatabaseService {
       },
       async (error) => {
         const axiosErr = error as AxiosError;
+        const { response, message, code } = axiosErr;
         console.log(
           '錯誤 error :',
-          axiosErr.response?.data ? axiosErr.response?.data : axiosErr.response,
+          {
+            code: code,
+            message: message,
+            response: response?.data ? response?.data : response,
+          }
         );
-        throw new HttpException(axiosErr.message || axiosErr.code || this.configService.get('ERR_BAD_REQUEST'), axiosErr.response.status || 400)
+        throw new HttpException(message || code || this.configService.get('ERR_BAD_REQUEST'), response.status || 400)
       }
     );
   }
 
-  async create(createBuildingDto: CreateBuildingDto): Promise<unknown> {
+  // onModuleInit(){}
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async onModuleInit() {
+    const username = this.configService.get('LAND_BASIC_USERNAME');
+    const password = this.configService.get('LAND_BASIC_PASSWORD');
+
+    let res = await lastValueFrom(this.httpService.get('https://api.land.moi.gov.tw/cp/gettoken', { auth: { username, password }}));
+    const { access_token } = res.data;
+    this.landAccessToken = access_token;
+  }
+
+  async create(createBuildingDto: CreateBuildingDto): Promise<ShowBuildingDto[]>  {
+
     // 取得地址
     const address = this.genAddress(createBuildingDto);
+    // return address;
     // 查詢現有 db 有無資料
-    const existItem = await this.softFindOne({ address });
-    if(existItem) {
-      return existItem
+    const existItems = await this.softFind({ address });
+    if(existItems.length) {
+      return existItems
     }
 
     // 打 api 取得大範圍建號資料
     const { code, city, area } = createBuildingDto;
     const noExplicitAddress = this.genAddress(createBuildingDto, false);
+    console.log('noExplicitAddress: ',noExplicitAddress);
+    Logger.log('執行 門牌查建號服務... ');
     const buildNos = await this.getBuildNo(code, noExplicitAddress);
-
-    if(!buildNos) {
+    Logger.log('完成 門牌查建號服務');
+    if(!buildNos?.length) {
       throw new HttpException(this.configService.get('ERR_RESOURCE_NOT_FOUND'), HttpStatus.NOT_FOUND);
     }
 
     // 取到的大範圍資料存到資料庫
     let buildings = [] // bulkWrite 需要的條件
     let buildNoArr = [] // find 需要的條件
-    let desiredOneBuildingNo = null // 如果有與需求地址符合直接回傳
+    let isFound = false // 如果有與需求地址符合直接回傳
     for(let i=0; i<buildNos.length; i++) {
       const { UNIT, SEC, NO, BNUMBER } = buildNos[i];
+      const idx = this.getStartIndex(BNUMBER);
       const item = {
-        address: city + area + BNUMBER.slice(BNUMBER.indexOf('鄰')+1), // 沒有村里, 鄰
+        address: city + area + BNUMBER.slice(idx), // 沒有村里, 鄰
         buildNo: {
           unit: UNIT,
           sec: SEC,
           no: NO,
         }
       };
-      if(item.address === address) desiredOneBuildingNo = item.buildNo;
+      if(item.address === address) isFound = true;
       buildNoArr.push(item.buildNo);
       buildings.push(item);
     }
@@ -88,21 +115,36 @@ export class BuildingService extends DatabaseService {
       }
     })
     await this.buildingModel.bulkWrite(operations);
-    if(desiredOneBuildingNo) {
-      return this.softFindOne({ buildNo: desiredOneBuildingNo });
+    if(isFound) {
+      // 可能會有相同地址但是建號不同 所以返回 array
+      return this.softFind({ address });
     }
+    // 找不到完全相符的就返回剛剛抓取的大範圍資料
     return this.softFind({ buildNo: { $in: buildNoArr }});
   }
 
-  async findOne(id: string): Promise<unknown> {
-    const existItem: BuildingDocument = await this.ensureExist(id);
+  async findOne(id: string): Promise<ShowDetailBuildingDto> {
+    let existItem = await this.genConvertItem(id);
+    // 如果都有資料的話 直接返回
+    if(existItem && existItem.basic) {
+      return existItem
+    }
+
     const { buildNo:{unit, sec, no} } = existItem;
 
-    const basic = await this.createBasic({UNIT: unit, SEC: sec, NO: no});
+    if(!existItem.basic) {
+      const basicData = await this.createBasic({UNIT: unit, SEC: sec, NO: no});
+      const basic = await this.buildingBasicService.create(basicData);
+      existItem.basic = basic._id;
+    }
 
+    await this.buildingModel.create(existItem);
+    return this.genConvertItem(id);
+  }
 
-    // this.buildingBasicService.create(basic)
-    return basic
+  private async genConvertItem(id: string){
+    let item: any = await this.buildingModel.findById(id).populate('basic').exec();
+    return this.codeConvertService.convert(item);
   }
 
 
@@ -110,115 +152,41 @@ export class BuildingService extends DatabaseService {
     // 標示部
     // API04 需先打API04取得地號
     const buildingLabel = await this.getBuildingLabel(buildNo);
-
     // 可能有多個地號
     const landNos = buildingLabel.landNos.map( item => ({ ...buildNo, NO: item.LANDNO }));
     // API01 土地標示部
-    let landLabelPromises = landNos.map(landNo => this.getLandLabel(landNo));
-    let landLabel = await Promise.all(landLabelPromises);
+    const landLabelPromises = landNos.map(landNo => this.getLandLabel(landNo));
+    const [landLabels] = await Promise.all(landLabelPromises);
 
-
-    // return {
-    //   label: {
-    //     landLabel,
-    //     buildingLabel
-    //   }
-    // }
-
-    // // 所有權部
-    // // API02
-    // const landOwn = await this.getLandOwn(landNo)
-    // // API05
-    const buildingOwn = await this.getBuildingOwn(buildNo)
-
-    return buildingOwn;
-
-    // // 其他權利部
-    // // API03
-    // const landOther = await this.getLandOther(landNo);
-    // // API06
-    // const buildingOther = await this.getBuildingOther(buildNo);
-    // return {
-    //   label: {
-    //     land: {
-    //       // 土地資訊
-    //       no: landNo.NO, // 多筆資料，怎麼處理？
-    //       zoning: landLabel.LANDREG.ZONING,
-    //       lClass: landLabel.LANDREG.LCLASS,
-    //       alValue: landLabel.LANDREG.ALVALUE,
-    //       alPrice: landLabel.LANDREG.ALPRICE,
-    //       otherReg: landLabel.LANDREG.OTHERREG,//.CONTENT => code:CATEGORY 多筆資料，只需要 CONTENT？
-    //       area: landLabel.LANDREG.AREA, // 0.3025
-    //     },
-    //     building: {
-    //       // 建物資料
-    //       no: buildNo.NO,
-    //       completeDate: buildingLabel.BLDGREG.COMPLETEDATE,
-    //       buildingFloor: buildingLabel.BLDGREG.BUILDINGFLOOR,
-    //       floorAcc: buildingLabel.FLOORACC, //.FPUR_ABPUR => code:FPUR_ABPUR 只需抓建物分層？
-    //       purpose: buildingLabel.BLDGREG.PURPOSE, // code
-    //       material: buildingLabel.BLDGREG.MATERIAL, // code
-    //       otherReg: buildingLabel.BLDGREG.OTHERREG, //.CONTENT => code: CATEGORY 多筆資料，只需要 CONTENT？
-    //       //建物面積資訊
-    //       area: buildingLabel.BLDGREG.AREA, // 0.3025
-    //       // 附屬建物合計面積: floorAcc: buildingLabel.FLOORACC[0].FAREA_ABAREA 加總附屬面積就好 還是需要個別顯示
-
-    //       sharedArea: buildingLabel.SHAREDAREA, // 沒有SHAREDPARK  面積 AREA * NUMERATOR / DENOMINATOR
-
-    //       sharePark: buildingLabel.SHAREDAREA[0].SHAREDPARK[0]// 有SHAREDPARK AREA * PSNUMERATOR / PSDENOMINATOR 就好？ 會是 array 要怎麼呈現？加總？
-    //       // 建物合計總面積 ？
-    //       //area+sharedArea+sharePark
-    //     }
-    //   },
-    /*   own: {
-    //     land: {
-    //       // 土地持分資訊 ? 還沒確定？
-
-    //       // 土地所有權登記資訊
-    //       rDate: landOwn[0].LANDOWNERSHIP[0].RDATE, // 呈現格式？
-    //       reason: landOwn[0].LANDOWNERSHIP[0].REASON, // 呈現格式？ code
-    //       dlPrice: landOwn[0].LANDOWNERSHIP[0].DLPRICE, // 呈現格式？
-    //       ltValue: landOwn[0].LANDOWNERSHIP[0].LTPRICE[0].LTVALUE, // 呈現格式？
-    //       // 他項權利登記次序: 可以跟下面合併？
-    //       otherReg: landOwn[0].LANDOWNERSHIP[0].OTHERREG,
-    //     },
-    //     building: {
-    //       // 建物持分資訊: 格式要怎麼呈現？
-    //       // 全部 : buildingOwn[0].BLDGOWNERSHIP[0] 的 NUMERATOR / DENOMINATOR
-    //       // 共有 : buildingLabel.SHAREDAREA[0] 的 NUMERATOR / DENOMINATOR
-    //       // 其他 : buildingLabel.BLDGREG.OTHERREG
-    //       // 建物持分比例？
-
-    //       // 建物所有權登記資訊
-    //       rDate: buildingOwn[0].BLDGOWNERSHIP[0].RDATE, // 呈現格式？
-    //       reason: buildingOwn[0].BLDGOWNERSHIP[0].REASON, // 呈現格式？ code
-    //       // 他項權利登記次序: 可以跟下面合併？
-    //       otherReg: buildingOwn[0].BLDGOWNERSHIP[0].OTHERREG, // 呈現格式？
-
-    //     }
-    //   },
-    //   other: {
-    //     land: {
-    //       //設定權利人 在哪？
-    //       owner: '',
-    //       rightType: landOther[0].LANDOWNERSHIP
-    //     },
-    //     building: {
-    //       //設定權利人 在哪？
-    //       owner: '',
-    //       rightType: buildingOther[0].OTHERRIGHTS[0].RIGHTTYPE, // code
-    //       rNo: buildingOther[0].RNO,
-    //       rDate: buildingOther[0].OTHERRIGHTS[0].RDATE,
-    //       ccpRv: buildingOther[0].OTHERRIGHTS[0].OTHERRIGHTFILE.CCP_RV
-
-    //     }
-    //   }
-    // }
-
-    // buildingOther[0].OTHERRIGHTS[0].OWNER
+    // 所有權部
     // API02
+    const landOwnPromises = landNos.map(landNo => this.getLandOwn(landNo));
+    const [landOwns] = await Promise.all(landOwnPromises);
 
-     return landLabel*/
+    // API05
+    const buildingOwns = await this.getBuildingOwn(buildNo);
+
+    // 他項權利部
+    // API03
+    const landOtherPromise = landNos.map(landNo => this.getLandOther(landNo));
+    const [landOthers] = await Promise.all(landOtherPromise);
+    // API06
+    const buildingOthers = await this.getBuildingOther(buildNo);
+
+    return {
+      label: {
+        landLabels,
+        buildingLabel
+      },
+      own: {
+        landOwns,
+        buildingOwns
+      },
+      other: {
+        landOthers,
+        buildingOthers
+      }
+    }
   }
   // ========== 土地＆建物 標示部 ==========
   private async getLandLabel(landNo: { UNIT: string, SEC: string, NO: string}) {
@@ -260,26 +228,14 @@ export class BuildingService extends DatabaseService {
       }
     }
 
-    const { NO, UNIT, LANDREG } = data;
+    const { NO, LANDREG } = data;
     const { ZONING, LCLASS, ALVALUE, ALPRICE, OTHERREG, AREA } = LANDREG;
-
-    // 非都市土地使用分區
-    let zoneCode = await this.cacheManager.get('zone');
-    let zone = ZONING && zoneCode[ZONING];
-
-    // 非都市土地使用地類別
-    let zoneDetailCode = await this.cacheManager.get('zoneDetail');
-    let zoneDetail = LCLASS && zoneDetailCode[LCLASS]
 
     // 公告地現值 換成 每坪
     let alValue = Math.round(+ALVALUE / 0.3025 * 100) / 100;
     // 公告地價 換成 每坪
     let alPrice = Math.round(+ALPRICE / 0.3025 * 100) / 100;
 
-    // 其他登記事項
-    let rgAllCode = await this.cacheManager.get('rgAllCode');
-    rgAllCode = rgAllCode[UNIT];
-    const otherReg = OTHERREG.map( val => ({ ...val, CATEGORY: rgAllCode[val.CATEGORY] }));
 
     // 土地總面積
     let totalArea = this.convertSqft(+AREA)
@@ -287,11 +243,11 @@ export class BuildingService extends DatabaseService {
     // 土地資訊
     return {
       no: NO,
-      zone: zone,
-      zoneDetail: zoneDetail,
+      zone: ZONING,
+      zoneDetail: LCLASS,
       alValue: alValue,
       alPrice: alPrice,
-      otherReg: otherReg,
+      otherReg: OTHERREG,
       totalArea: totalArea
     }
   }
@@ -448,21 +404,11 @@ export class BuildingService extends DatabaseService {
           }
       ]
     }
-    const { NO, UNIT, BLDGREG, FLOORACC, SHAREDAREA } = data;
+    const { NO, BLDGREG, FLOORACC, SHAREDAREA } = data;
 
     // 主建物樓層
     const floor = FLOORACC.find(val => val.FID_ABID === '建物分層')?.FPUR_ABPUR;
 
-    // 用途 & 建材
-    const purposeCode = await this.cacheManager.get('purpose');
-    const materialCode = await this.cacheManager.get('materials');
-    const purpose = purposeCode[BLDGREG.PURPOSE];
-    const material = materialCode[BLDGREG.MATERIAL];
-
-    // 其他登記事項
-    let rgAllCode = await this.cacheManager.get('rgAllCode');
-    rgAllCode = rgAllCode[UNIT];
-    const otherReg = BLDGREG.OTHERREG.map( val => ({ ...val, CATEGORY: rgAllCode[val.CATEGORY] }));
 
     /* ============ 建物面積資訊 ============ */
     // 建物總面積
@@ -472,21 +418,20 @@ export class BuildingService extends DatabaseService {
     totalArea += +BLDGREG.AREA;
 
     // 附屬建物總面積 & 各面積
-    let accessoryCode = await this.cacheManager.get('accessoryUsage');
-    accessoryCode = accessoryCode[UNIT];
     const accessoryBuilding = [];
     let accessoryTotalArea = 0;
     for(let i=0; i< FLOORACC.length; i++) {
       if(FLOORACC[i].FID_ABID === '附屬建物') {
         let { FAREA_ABAREA, FPUR_ABPUR } = FLOORACC[i];
         totalArea += +FAREA_ABAREA;
-        accessoryTotalArea += this.convertSqft(+FAREA_ABAREA);
+        accessoryTotalArea += +FAREA_ABAREA;
         accessoryBuilding.push({
-          FPUR_ABPUR: accessoryCode[FPUR_ABPUR],
+          FPUR_ABPUR: FPUR_ABPUR,
           FAREA_ABAREA: this.convertSqft(+FAREA_ABAREA)
         })
       }
     }
+    accessoryTotalArea = this.convertSqft(accessoryTotalArea);
 
     // 公設面積 & 車位面積
     let sharedArea = 0, shareParkArea = 0;
@@ -514,9 +459,9 @@ export class BuildingService extends DatabaseService {
       completeDate: BLDGREG.COMPLETEDATE, // 建築完成日期
       buildingTotalFloor: BLDGREG.BUILDINGFLOOR, // 建築總樓層
       floor: floor, // 物件樓層
-      purpose: purpose, // 建物用途: 代碼
-      material: material, // 建物結構: 代碼
-      otherReg: otherReg, // 其他登記事項內容, 代碼
+      purpose: BLDGREG.PURPOSE, // 建物用途: 代碼
+      material: BLDGREG.MATERIAL, // 建物結構: 代碼
+      otherReg: BLDGREG.OTHERREG, // 其他登記事項內容, 代碼
       // 建物面積資訊
       area: area,
       accessoryTotalArea: accessoryTotalArea,// 附屬建物合計面積
@@ -637,7 +582,35 @@ export class BuildingService extends DatabaseService {
           ]
       }
     ]
-    return data
+    const landOwn = data[0].LANDOWNERSHIP;
+
+    const res = landOwn.map(val => {
+
+      const dlPrice = Math.round(+val.DLPRICE / 0.3025 * 100) / 100;
+      const ltPrice = val.LTPRICE.map(item => {
+        return {
+          ...item,
+          LTVALUE: Math.round(+item.LTVALUE / 0.3025 * 100) / 100
+        }
+      })
+
+
+      // OTHERREG
+      return {
+        // 土地持分資訊
+        rights: val.RIGHT,
+        numerator: val.NUMERATOR,
+        denominator: val.DENOMINATOR,
+        // 土地所有權登記資訊
+        rDate: val.RDATE,
+        reason: val.REASON,
+        dlPrice: dlPrice,
+        ltPrice: ltPrice,
+        otherrights: val.OTHERRIGHTS,
+        otherreg: val.OTHERREG
+      }
+    })
+    return res
   }
   private async getBuildingOwn(buildNo: { UNIT: string, SEC: string, NO: string }) {
     let data = [
@@ -683,7 +656,23 @@ export class BuildingService extends DatabaseService {
           ]
       }
     ]
-    return data
+
+    const buildingOwn = data[0].BLDGOWNERSHIP;
+
+    const res = buildingOwn.map(val => {
+      return {
+        // 建物持分資訊
+        rights: val.RIGHT,
+        numerator: val.NUMERATOR,
+        denominator: val.DENOMINATOR,
+        // 建物所有權登記資訊
+        rDate: val.RDATE,
+        reason: val.REASON,
+        otherrights: val.OTHERRIGHTS,
+        otherreg: val.OTHERREG
+      }
+    })
+    return res
   }
   // ========== 土地＆建物 他項權利部 ==========
   private async getLandOther(landNo: { UNIT: string, SEC: string, NO: string}) {
@@ -693,108 +682,156 @@ export class BuildingService extends DatabaseService {
           "SEC": "0424",
           "NO": "03160000",
           "OFFSET": "1",
-          "LIMIT": "2",
-          "RNO": "0030",
-          "LANDOWNERSHIP": [
+          "LIMIT": "10",
+          "RNO": "0030", //所有權登記次序，字元長度為4
+          "OTHERRIGHTS": [ //相關他項權利部
               {
-                  "OWRNO": "0030",
-                  "OCDATE": "110",
-                  "OCNO1": "ACAA",
-                  "OCNO2": "038700",
+                  "ORNO": "0059000", //他項權利登記次序
+                  "RECEIVEYEAR": "110", //收件年期
+                  "RECEIVENO1": "ACAF", //收件字
+                  "RECEIVENO2": "040220", //收件號
+                  "RDATE": "1101230", //登記日期
+                  "REASON": "83", //登記原因(※代碼06)
+                  "SETRIGHT": null, //設定權利範圍類別(※代碼15)
+                  "SRDENOMINATOR": "100000", //設定權利範圍持分分母
+                  "SRNUMERATOR": "4901", //設定權利範圍持分分子
+                  "AREA": null, //設定權利範圍面積
+                  "CERTIFICATENO": "1107014977", //證明書字號
+                  "CLAIMRIGHT": "A", //債權權利範圍類別(※代碼18)
+                  "CRDENOMINATOR": "1", //債權權利範圍持分分母
+                  "CRNUMERATOR": "1", //債權權利範圍持分分子
+                  "RIGHTTYPE": "N", //權利種類(※代碼27)
+                  "SUBJECTTYPE": "A", //標的種類(※代碼27)
+                  "LANDOWNERSHIP": [ //標的登記次序
+                      {
+                          "OWRNO": "0030" //所有權登記次序
+                      }
+                  ],
+                  "OWNER": { //權利人
+                      "LTYPE": null, //類別(※代碼09)
+                      "LID": null, //統一編號
+                      "LNAME": null, //姓名
+                      "LADDR": null //地址
+                  },
+                  "JOINTGUARANTY": { //共同擔保地／建號
+                      "LAND": [ //土地
+                          {
+                              "SEC": "0424", //共同擔保地號-段
+                              "NO": "03160000" //共同擔保地號
+                          }
+                      ],
+                      "BUILDING": [ //建物
+                          {
+                              "SEC": "0424", //共同擔保建號-段
+                              "NO": "04182000" //共同擔保建號
+                          }
+                      ]
+                  },
+                  "OTHERRIGHTFILE": { //他項權利檔
+                      "OTFNO": "110ACAF040220", //他項權利檔號
+                      "CCPT_RVT": "N", //擔保債權總金額/權利價值類別(※代碼17)
+                      "CCP_RV": "960000", //擔保債權總金額/權利價值
+                      "DURATIONTYPE": null, //存續期間類別(※代碼19)
+                      "STARTDATE": null, //起始日期
+                      "ENDDATE": null, //終止日期
+                      "PODT": "A", //清償日期類別(※代碼20)
+                      "PODD": null, //清償日期說明
+                      "ITYPE_LRTYPE": "A", //利息(率)或地租類別(※代碼21)
+                      "ID_LRD": null, //利息(率)或地租說明
+                      "DITYPE": "A", //遲延利息(率)類別(※代碼21)
+                      "DID": null, //遲延利息(率)說明
+                      "PTYPE": "A", //違約金類別(※代碼21)
+                      "PD": null, //違約金說明
+                      "CCTYPE": "Q", //擔保債權種類及範圍類別(※代碼33)
+                      "CCCONTENT": "擔保債務人對抵押權人現在（包括過去所負現在尚未清償）及將來在本抵押權設定契約書所定最高限額內所負之債務，包括１‧票據、２‧借款、３‧透支、４‧保證、５‧信用卡契約、６‧貼現、７‧承兌、８‧墊款、９‧買入光票、１０‧委任保證、１１‧開發信用狀、１２‧進出口押匯、１３‧應收帳款承購契約、１４‧衍生性金融商品交易契約及１５‧特約商店契約、１６‧信託關係所生之地價稅、房屋稅、營業稅及公法上金錢給付義務等１６項。", //擔保債權種類及範圍內容
+                      "CCSDT": "Q", //擔保債權確定期日類別(※代碼34)
+                      "CCSDD": "民國１４０年１２月２８日。", //擔保債權確定期日日期
+                      "OGSAT": "Q", //其他擔保範圍約定類別(※代碼35)
+                      "OGSAC": "１．取得執行名義之費用。２．保全抵押物之費用。３．因債務不履行而發生之損害賠償。４．因辦理債務人與抵押權人約定之擔保債權種類及範圍所生之手續費用。５．抵押權人墊付抵押物之保險費及按墊付日抵押權人基準利率加碼年利率５％之利息。" //其他擔保範圍約定內容
+                  },
+                  "OTHERREG": [] //其他登記事項
+              },
+              {
+                  "ORNO": "0052000",
+                  "RECEIVEYEAR": "110",
+                  "RECEIVENO1": "ACAA",
+                  "RECEIVENO2": "038710",
                   "RDATE": "1101124",
-                  "REASON": "64",
-                  "REASONDATE": "1101110",
-                  "RIGHT": null,
-                  "DENOMINATOR": "100000",
-                  "NUMERATOR": "4901",
-                  "DLPRICE": "92800.0",
+                  "REASON": "83",
+                  "SETRIGHT": null,
+                  "SRDENOMINATOR": "100000",
+                  "SRNUMERATOR": "4901",
+                  "AREA": null,
+                  "CERTIFICATENO": "1107013453",
+                  "CLAIMRIGHT": "A",
+                  "CRDENOMINATOR": "1",
+                  "CRNUMERATOR": "1",
+                  "RIGHTTYPE": "N",
+                  "SUBJECTTYPE": "A",
+                  "LANDOWNERSHIP": [
+                      {
+                          "OWRNO": "0030"
+                      }
+                  ],
                   "OWNER": {
                       "LTYPE": null,
                       "LID": null,
                       "LNAME": null,
                       "LADDR": null
                   },
-                  "LTPRICE": [
-                      {
-                          "LTDATE": "11011",
-                          "LTVALUE": "418000.0",
-                          "PORIGHT": null,
-                          "PODENOMINATOR": "100000",
-                          "PONUMERATOR": "4901"
-                      }
-                  ],
-                  "OTHERREG": [
-                      {
-                          "NUMBER": "020",
-                          "CATEGORY": "99",
-                          "CONTENT": "１１１年４月２２日中山字第０５５３１０號，依財政部北區國稅局北區國稅三重服字第１１１３４０４７８７Ａ號函辦理禁止處分登記，納稅義務人：李鴻智即兆星裝潢工程行，限制範圍：１０００００分之４９０１，１１１年４月２２日登記。"
-                      },
-                      {
-                          "NUMBER": "040",
-                          "CATEGORY": "99",
-                          "CONTENT": "１１１年９月２７日中山字第１３０６５０號，依臺灣臺北地方法院民事執行處１１１年９月２７日北院忠１１１司執甲字第１０１００６號函辦理查封登記，債權人：苗芳瑛，債務人：李泳志（原名：李鴻智），限制範圍：１０００００分之４９０１，１１１年９月２７日登記。"
-                      }
-                  ],
-                  "OTHERRIGHTS": [
-                      {
-                          "ORNO": "0052000"
-                      },
-                      {
-                          "ORNO": "0059000"
-                      }
-                  ]
+                  "JOINTGUARANTY": {
+                      "LAND": [
+                          {
+                              "SEC": "0424",
+                              "NO": "03160000"
+                          }
+                      ],
+                      "BUILDING": [
+                          {
+                              "SEC": "0424",
+                              "NO": "04182000"
+                          }
+                      ]
+                  },
+                  "OTHERRIGHTFILE": {
+                      "OTFNO": "110ACAA038710",
+                      "CCPT_RVT": "N",
+                      "CCP_RV": "23960000",
+                      "DURATIONTYPE": null,
+                      "STARTDATE": null,
+                      "ENDDATE": null,
+                      "PODT": "Z",
+                      "PODD": "依照各個債務契約所約定之清償日期。",
+                      "ITYPE_LRTYPE": "Q",
+                      "ID_LRD": "依照各個債務契約所約定之利率計算。",
+                      "DITYPE": "Q",
+                      "DID": "依照各個債務契約所約定之利率計算。",
+                      "PTYPE": "Q",
+                      "PD": "依照各個債務契約所約定之違約金計收標準計算。",
+                      "CCTYPE": "Q",
+                      "CCCONTENT": "擔保債務人對抵押權人現在（包含過去所負現在尚未清償）及將來在本抵押權設定契約書所定最高限額內所負之債務，包括借款、信用卡契約、保證、透支、票據、衍生性金融商品交易契約。",
+                      "CCSDT": "Q",
+                      "CCSDD": "民國１４０年１１月２１日。",
+                      "OGSAT": "Q",
+                      "OGSAC": "１．取得執行名義之費用。２．保全抵押物之費用。３．因債務不履行而發生之損害賠償。４．因債務人與抵押權人約定之擔保債權種類及範圍所生之手續費用。５．抵押權人墊付抵押物之保險費及自墊付日起依民法規定之延遲利息。"
+                  },
+                  "OTHERREG": []
               }
           ]
       },
-      {
-          "UNIT": "AC",
-          "SEC": "0424",
-          "NO": "03160000",
-          "OFFSET": "1",
-          "LIMIT": "2",
-          "RNO": "0031",
-          "LANDOWNERSHIP": [
-              {
-                  "OWRNO": "0031",
-                  "OCDATE": "110",
-                  "OCNO1": "ACAA",
-                  "OCNO2": "038720",
-                  "RDATE": "1101124",
-                  "REASON": "64",
-                  "REASONDATE": "1101110",
-                  "RIGHT": null,
-                  "DENOMINATOR": "100000",
-                  "NUMERATOR": "4635",
-                  "DLPRICE": "92800.0",
-                  "OWNER": {
-                      "LTYPE": null,
-                      "LID": null,
-                      "LNAME": null,
-                      "LADDR": null
-                  },
-                  "LTPRICE": [
-                      {
-                          "LTDATE": "11011",
-                          "LTVALUE": "418000.0",
-                          "PORIGHT": null,
-                          "PODENOMINATOR": "100000",
-                          "PONUMERATOR": "4635"
-                      }
-                  ],
-                  "OTHERREG": [],
-                  "OTHERRIGHTS": [
-                      {
-                          "ORNO": "0053000"
-                      },
-                      {
-                          "ORNO": "0076000"
-                      }
-                  ]
-              }
-          ]
+
+  ]
+    const landOther = data[0].OTHERRIGHTS;
+    let res = landOther.map(val => {
+      return {
+        ownName: val.OWNER.LNAME,
+        rightType: val.RIGHTTYPE,
+        rNo: val.ORNO,
+        rDate: val.RDATE,
+        ccpRv: val.OTHERRIGHTFILE.CCP_RV
       }
-    ]
-    return data
+    })
+    return res
   }
   private async getBuildingOther(buildNo: { UNIT: string, SEC: string, NO: string }) {
     let data = [
@@ -1010,32 +1047,55 @@ export class BuildingService extends DatabaseService {
           ]
       }
     ]
-    return data
+
+    const buildingOther = data[0].OTHERRIGHTS;
+
+    let res = buildingOther.map(val => {
+      return {
+        ownName: val.OWNER.LNAME,
+        rightType: val.RIGHTTYPE,
+        rNo: val.ORNO,
+        rDate: val.RDATE,
+        ccpRv: val.OTHERRIGHTFILE.CCP_RV
+      }
+    })
+    return res
   }
   // ==================================================
 
+  // 平方公尺轉坪 四捨五入小數點後 2位
   private convertSqft(sqft: number): number {
     return Math.round((sqft + Number.EPSILON) * 0.3025 * 100) / 100
   }
 
+  // 處理 BNUMBER 地址, 因為沒有村里鄰所以需要拿掉
+  getStartIndex(bnumber: string): number {
+    let index = -1
+    for(let i=0; i<bnumber.length; i++) {
+      const item = bnumber[i];
+      if(item === '村' || item === '里' || item === '鄰') {
+        i > index ? index = i : index
+      }
+    }
+    return index+1
+  }
+
   // 取得建號
   private async getBuildNo(code: string, address: string): Promise<Array<any>> {
-
     const res = await lastValueFrom(this.httpService.post('https://api.land.moi.gov.tw/cp/api/AddressQueryBuilding/1.0/QueryByAddress', [{
       CITY: code,
       ADDRESS: address
     }], {
       headers: {
-        Authorization: `Bearer ${this.configService.get('LAND_ACCESS_TOKEN')}`,
-      }
-    }))
+        Authorization: `Bearer ${this.landAccessToken}`,
+      },
+    }));
 
     if(!res.data?.STATUS) {
       throw new HttpException(this.configService.get('ERR_BAD_REQUEST'), HttpStatus.BAD_REQUEST);
     }
     const data = res.data.RESPONSE[0].BLDGREG;
     return data
-
   }
 
   // 處理地址，explict==false 的話就是取大範圍

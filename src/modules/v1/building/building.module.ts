@@ -9,6 +9,7 @@ import { BuildingBasicModule } from '../building-basic/building-basic.module';
 import { BuildingBasicService } from '../building-basic/building-basic.service';
 import { BuildingBasic, BuildingBasicSchema } from '../building-basic/entities/building-basic.entity';
 import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
+import { CodeConvertModule } from '../code-convert/code-convert.module';
 
 @Module({
   imports: [
@@ -16,7 +17,7 @@ import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
       { name: Building.name, schema: BuildingSchema },
       { name: BuildingBasic.name, schema: BuildingBasicSchema }
     ]),
-    // CacheModule.register(),
+    CodeConvertModule,
     HttpModule,
     ConfigModule
   ],

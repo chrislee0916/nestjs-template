@@ -1,4 +1,4 @@
-import { Inject, Injectable, OnModuleInit } from '@nestjs/common';
+import { Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { lastValueFrom } from 'rxjs';
 import { HttpService } from '@nestjs/axios';
 import { CodeConvert, CodeConvertDocument, CodeConvertSchema } from './entities/code-convert.entity';
@@ -7,6 +7,8 @@ import { Model, Types } from 'mongoose';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
+import { Building, BuildingDocument } from '../building/entities/building.entity';
+import { Document } from 'mongoose';
 
 @Injectable()
 export class CodeConvertService implements OnModuleInit{
@@ -17,10 +19,10 @@ export class CodeConvertService implements OnModuleInit{
   ){}
 
   onModuleInit(){
-    // this.create()
+
   }
 
-  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  @Cron(CronExpression.EVERY_WEEK)
   async create() {
     let codeConvert = await this.findOne() || new this.codeConvertModel({
       city: {},
@@ -259,17 +261,84 @@ export class CodeConvertService implements OnModuleInit{
     })
     await Promise.all(rgAllCodePromises)
     keys.push('rgAllCode');
+    Logger.log('fetch all code success');
 
     let res = await codeConvert.save();
+    Logger.log('save code-convert success')
 
     const cachePromises = keys.map(key => this.cacheManager.set(key, res[key] || ''));
     await Promise.all(cachePromises);
+    Logger.log('update code-convert success')
 
     return 'update code-convert success'
   }
 
-  findOne(){
+  async findOne(){
     return this.codeConvertModel.findOne().exec();
+  }
+
+  async convert(item: any){
+    const { unit } = item.buildNo;
+    // 非都市土地使用分區
+    const zoneCode = await this.cacheManager.get('zone');
+    // 非都市土地使用地類別
+    const zoneDetailCode = await this.cacheManager.get('zoneDetail');
+    // 用途 & 建材
+    const purposeCode = await this.cacheManager.get('purpose');
+    const materialCode = await this.cacheManager.get('materials');
+    // 建物分層或附屬建物用途
+    let accessoryCode = await this.cacheManager.get('accessoryUsage');
+    accessoryCode = accessoryCode[unit];
+    // 權利範圍類別
+    const rightsCode = await this.cacheManager.get('rights');
+    // 登記原因代碼
+    let reasonCode = await this.cacheManager.get('reason');
+    reasonCode = reasonCode[unit]
+    // 權利種類&標的種類
+    const rightsAndTypesCode = await this.cacheManager.get('rightsAndTypes');
+    // 其他登記事項
+    let rgAllCode = await this.cacheManager.get('rgAllCode');
+    rgAllCode = rgAllCode[unit];
+    if(item.basic) {
+      /***** 標示部 *****/
+      let { landLabels, buildingLabel } = item.basic.label;
+      // 土地
+      landLabels.zone = landLabels.zone && zoneCode[landLabels.zone];
+      landLabels.zoneDetail = landLabels.zoneDetail && zoneDetailCode[landLabels.zoneDetail];
+      landLabels.otherReg = landLabels.otherReg.map(val => ({ ...val, CATEGORY: rgAllCode[val.CATEGORY] }));
+      // 建物
+      buildingLabel.buildingTotalFloor = accessoryCode[buildingLabel.buildingTotalFloor];
+      buildingLabel.floor = accessoryCode[buildingLabel.floor];
+      buildingLabel.purpose = purposeCode[buildingLabel.purpose];
+      buildingLabel.material = materialCode[buildingLabel.material];
+      buildingLabel.otherReg = buildingLabel.otherReg.map(val => ({ ...val, CATEGORY: rgAllCode[val.CATEGORY] }));
+      buildingLabel.accessoryBuilding = buildingLabel.accessoryBuilding.map(val => ({ ...val, FPUR_ABPUR: accessoryCode[val.FPUR_ABPUR]}))
+      /*****  所有權部 *****/
+      let { landOwns, buildingOwns } = item.basic.own;
+      // 土地
+      landOwns.forEach(val => {
+        val.rights = val.rights && rightsCode[val.rights];
+        val.reason = val.reason && reasonCode[val.reason];
+        val.otherreg = val.otherreg.map(val => ({ ...val, CATEGORY: rgAllCode[val.CATEGORY]}));
+      })
+      // 建物
+      buildingOwns.forEach(val => {
+        val.rights = val.rights && rightsCode[val.rights];
+        val.reason = val.reason && reasonCode[val.reason];
+        val.otherreg = val.otherreg.map(val => ({ ...val, CATEGORY: rgAllCode[val.CATEGORY]}));
+      })
+      /***** 其他項權利部 *****/
+      let { landOthers, buildingOthers } = item.basic.other;
+      // 土地
+      landOthers.forEach(val => {
+        val.rightType = val.rightType && rightsAndTypesCode[val.rightType];
+      })
+      // 建物
+      buildingOthers.forEach(val => {
+        val.rightType = val.rightType && rightsAndTypesCode[val.rightType];
+      })
+    }
+    return item
   }
 
 
@@ -372,6 +441,4 @@ export class CodeConvertService implements OnModuleInit{
     const { data } = await lastValueFrom(this.httpService.post('https://openapi.land.moi.gov.tw/WEBAPI/LandQuery/QueryRGALLCode', [{ UNIT: area }]));
     return data.RESPONSE
   }
-
-
 }

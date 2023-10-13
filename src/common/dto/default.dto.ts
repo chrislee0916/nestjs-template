@@ -18,10 +18,10 @@ export class DefaultDataDto {
   _id?: string;
 
   @ApiProperty({
-    description: '是否刪除',
-    example: false,
+    description: '刪除時間',
+    example: null,
   })
-  trashed?: boolean;
+  deletedAt?: number;
 
   @ApiProperty({
     description: '建立時間',

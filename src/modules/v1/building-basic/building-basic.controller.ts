@@ -5,11 +5,11 @@ import { UpdateBuildingBasicDto } from './dto/update-building-basic.dto';
 
 @Controller('building-basic')
 export class BuildingBasicController {
-  constructor(private readonly buildingBasicService: BuildingBasicService) {}
+  // constructor(private readonly buildingBasicService: BuildingBasicService) {}
 
-  @Post()
-  create(@Body() createBuildingBasicDto: CreateBuildingBasicDto) {
-    return this.buildingBasicService.create(createBuildingBasicDto);
-  }
+  // @Post()
+  // create(@Body() createBuildingBasicDto: CreateBuildingBasicDto) {
+  //   return this.buildingBasicService.create(createBuildingBasicDto);
+  // }
 
 }

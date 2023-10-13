@@ -12,7 +12,6 @@ export class BuildingBasicService {
   ){}
 
   create(createBuildingBasicDto: CreateBuildingBasicDto) {
-    return createBuildingBasicDto
     return this.buildingBasicModel.create(createBuildingBasicDto)
   }
 }

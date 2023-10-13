@@ -11,23 +11,23 @@ import { UserShowResponsesDto } from './dto/show-user.dto';
 export class UserController {
   constructor(private readonly userService: UserService) {}
 
-  @Get()
-  async list(@Query() query: UserListDto): Promise<UserListResponsesDto> {
-    const items = await this.userService.list(query);
-    const total = await this.userService.count(query);
+  // @Get()
+  // async list(@Query() query: UserListDto): Promise<UserListResponsesDto> {
+  //   const items = await this.userService.list(query);
+  //   const total = await this.userService.count(query);
 
-    const doc = {
-      limit: query.limit,
-      skip: query.skip,
-      sort: query.sort,
-      total,
-      items,
-    };
-    return doc;
-  }
+  //   const doc = {
+  //     limit: query.limit,
+  //     skip: query.skip,
+  //     sort: query.sort,
+  //     total,
+  //     items,
+  //   };
+  //   return doc;
+  // }
 
-  @Get(':userId')
-  async show(@Param('userId') userId: string): Promise<UserShowResponsesDto> {
-    return await this.userService.ensureExist(userId);
-  }
+  // @Get(':userId')
+  // async show(@Param('userId') userId: string): Promise<UserShowResponsesDto> {
+  //   return await this.userService.ensureExist(userId);
+  // }
 }

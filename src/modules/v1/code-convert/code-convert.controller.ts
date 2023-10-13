@@ -5,15 +5,15 @@ import { CodeConvertService } from './code-convert.service';
 export class CodeConvertController {
   constructor(private readonly codeConvertService: CodeConvertService) {}
 
-  @Post()
-  create() {
-    return this.codeConvertService.create();
+  // @Post()
+  // create() {
+  //   return this.codeConvertService.create();
 
-  }
+  // }
 
-  @Get()
-  findOne() {
-    return this.codeConvertService.findOne();
-  }
+  // @Get()
+  // findOne() {
+  //   return this.codeConvertService.findOne();
+  // }
 
 }
