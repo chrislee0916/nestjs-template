@@ -10,6 +10,7 @@ import { BuildingBasicService } from '../building-basic/building-basic.service';
 import { BuildingBasic, BuildingBasicSchema } from '../building-basic/entities/building-basic.entity';
 import { CACHE_MANAGER, CacheModule } from '@nestjs/cache-manager';
 import { CodeConvertModule } from '../code-convert/code-convert.module';
+import buildingConfig from './config/building.config';
 
 @Module({
   imports: [
@@ -19,7 +20,7 @@ import { CodeConvertModule } from '../code-convert/code-convert.module';
     ]),
     CodeConvertModule,
     HttpModule,
-    ConfigModule
+    ConfigModule.forFeature(buildingConfig)
   ],
   controllers: [BuildingController],
   providers: [BuildingService, BuildingBasicService],

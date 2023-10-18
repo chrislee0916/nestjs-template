@@ -9,6 +9,7 @@ import { CACHE_MANAGER } from '@nestjs/cache-manager';
 import { Cache } from 'cache-manager';
 import { Building, BuildingDocument } from '../building/entities/building.entity';
 import { Document } from 'mongoose';
+import { ShowDetailBuildingDto } from '../building/dto/show-building.dto';
 
 @Injectable()
 export class CodeConvertService implements OnModuleInit{

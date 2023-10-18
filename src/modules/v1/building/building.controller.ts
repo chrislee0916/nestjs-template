@@ -3,6 +3,7 @@ import { BuildingService } from './building.service';
 import { CreateBuildingDto } from './dto/create-building.dto';
 import { ApiCreatedResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ShowBuildingDto, ShowDetailBuildingDto } from './dto/show-building.dto';
+import { LandRNosBuildingDto } from './dto/update-building.dto';
 
 @ApiTags('building (建物檔案)')
 @Controller('building')
@@ -17,11 +18,11 @@ export class BuildingController {
   @ApiCreatedResponse({
     type: [ShowBuildingDto]
   })
-  create(@Body() createBuildingDto: CreateBuildingDto) {
+  create(@Body() createBuildingDto: CreateBuildingDto): Promise<ShowBuildingDto[]> {
     return this.buildingService.create(createBuildingDto);
   }
 
-  @Get(':id')
+  @Patch(':id')
   @ApiOperation({
     summary: '建立建號相關',
     description: '依照建號建立相關資料，例如：基本資訊、地圖等等'
@@ -29,8 +30,8 @@ export class BuildingController {
   @ApiCreatedResponse({
     type: ShowDetailBuildingDto
   })
-  async findOne(@Param('id') id: string) {
-    return this.buildingService.findOne(id);
+  async findOne(@Param('id') id: string, @Body() body: LandRNosBuildingDto)/*: Promise<ShowDetailBuildingDto>*/ {
+    return this.buildingService.findOne(id, body);
   }
 
 }

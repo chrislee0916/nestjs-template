@@ -12,7 +12,7 @@ export class UserService extends DatabaseService {
     super(DB);
   }
 
-  async create({ username }: any): Promise<User> {
+  async create({ username }: any): Promise<UserDocument> {
     return this.DB.create({
       username,
     });

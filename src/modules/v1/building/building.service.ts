@@ -1,6 +1,5 @@
 import { HttpException, HttpStatus, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { CreateBuildingDto } from './dto/create-building.dto';
-import { UpdateBuildingDto } from './dto/update-building.dto';
 import { DatabaseService } from 'src/database/database.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Building, BuildingDocument, BuildingSchema } from './entities/building.entity';
@@ -8,7 +7,7 @@ import { Document, Model, Types } from 'mongoose';
 import { HttpService } from '@nestjs/axios';
 import { catchError, lastValueFrom, map, tap } from 'rxjs';
 import axios, { AxiosError } from 'axios';
-import { ConfigService } from '@nestjs/config';
+import { ConfigService, ConfigType } from '@nestjs/config';
 import { BuildingBasic } from '../building-basic/entities/building-basic.entity';
 import { BuildingBasicService } from '../building-basic/building-basic.service';
 import { CACHE_MANAGER } from '@nestjs/cache-manager';
@@ -18,10 +17,19 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { CodeConvertService } from '../code-convert/code-convert.service';
 import { ShowBuildingDto, ShowDetailBuildingDto } from './dto/show-building.dto';
 import { ListBuildingDto } from './dto/list-building.dto';
+import * as dayjs from 'dayjs';
+import buildingConfig from './config/building.config';
+import { LandRNosBuildingDto } from './dto/update-building.dto';
+
+const enum fileTypes {
+  basic = 1,
+}
 
 @Injectable()
 export class BuildingService extends DatabaseService implements OnModuleInit {
   private landAccessToken = '';
+  private updateDuration: number; // 單位為天
+
 
   constructor(
     @InjectModel(Building.name) private readonly buildingModel: Model<BuildingDocument>,
@@ -29,6 +37,8 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
     private readonly buildingBasicService: BuildingBasicService,
     private readonly httpService: HttpService,
     private readonly configService: ConfigService,
+    @Inject(buildingConfig.KEY)
+    private readonly buildingsConfiguration: ConfigType<typeof buildingConfig>
   ){
     super(buildingModel);
     this.httpService.axiosRef.interceptors.response.use(
@@ -50,24 +60,26 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
         throw new HttpException(message || code || this.configService.get('ERR_BAD_REQUEST'), response.status || 400)
       }
     );
+
+    this.updateDuration = this.buildingsConfiguration.updateDuration;
   }
 
-  // onModuleInit(){}
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  async onModuleInit() {
-    const username = this.configService.get('LAND_BASIC_USERNAME');
-    const password = this.configService.get('LAND_BASIC_PASSWORD');
+  onModuleInit(){}
+  // @Cron(CronExpression.EVERY_5_MINUTES)
+  // async onModuleInit() {
+  //   const username = this.configService.get('LAND_BASIC_USERNAME');
+  //   const password = this.configService.get('LAND_BASIC_PASSWORD');
 
-    let res = await lastValueFrom(this.httpService.get('https://api.land.moi.gov.tw/cp/gettoken', { auth: { username, password }}));
-    const { access_token } = res.data;
-    this.landAccessToken = access_token;
-  }
+  //   let res = await lastValueFrom(this.httpService.get('https://api.land.moi.gov.tw/cp/gettoken', { auth: { username, password }}));
+  //   const { access_token } = res.data;
+  //   this.landAccessToken = access_token;
+  // }
 
   async create(createBuildingDto: CreateBuildingDto): Promise<ShowBuildingDto[]>  {
 
     // 取得地址
     const address = this.genAddress(createBuildingDto);
-    // return address;
+
     // 查詢現有 db 有無資料
     const existItems = await this.softFind({ address });
     if(existItems.length) {
@@ -123,17 +135,19 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
     return this.softFind({ buildNo: { $in: buildNoArr }});
   }
 
-  async findOne(id: string): Promise<ShowDetailBuildingDto> {
+  async findOne(id: string, { landRNos }: LandRNosBuildingDto): Promise<ShowDetailBuildingDto> {
     let existItem = await this.genConvertItem(id);
+    // 判斷是否需要重新更新資料
+    const shouldUpdate = dayjs().diff(existItem.updatedAt, 'day') >= this.updateDuration;
     // 如果都有資料的話 直接返回
-    if(existItem && existItem.basic) {
+    if(!shouldUpdate && existItem && existItem.basic) {
       return existItem
     }
 
-    const { buildNo:{unit, sec, no} } = existItem;
+    const { unit, sec, no } = existItem.buildNo;
 
-    if(!existItem.basic) {
-      const basicData = await this.createBasic({UNIT: unit, SEC: sec, NO: no});
+    if(!existItem.basic || shouldUpdate) {
+      const basicData = await this.createBasic({UNIT: unit, SEC: sec, NO: no}, landRNos);
       const basic = await this.buildingBasicService.create(basicData);
       existItem.basic = basic._id;
     }
@@ -142,27 +156,28 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
     return this.genConvertItem(id);
   }
 
+  // 取得所有相關的資料並轉代碼
   private async genConvertItem(id: string){
     let item: any = await this.buildingModel.findById(id).populate('basic').exec();
+    if(!item) throw new HttpException(this.configService.get('ERR_RESOURCE_NOT_FOUND'), HttpStatus.NOT_FOUND)
     return this.codeConvertService.convert(item);
   }
 
 
-  private async createBasic(buildNo: { UNIT: string, SEC: string, NO: string })/*: Promise<CreateBuildingBasicDto> */{
+  private async createBasic(buildNo: { UNIT: string, SEC: string, NO: string }, landRNos: Record<string, string[]>)/*: Promise<CreateBuildingBasicDto> */{
     // 標示部
     // API04 需先打API04取得地號
     const buildingLabel = await this.getBuildingLabel(buildNo);
     // 可能有多個地號
-    const landNos = buildingLabel.landNos.map( item => ({ ...buildNo, NO: item.LANDNO }));
+    const landNos = buildingLabel.landNos.map( item => ({ UNIT: buildNo.UNIT, SEC: item.SUBSECTION, NO: item.LANDNO }));
     // API01 土地標示部
     const landLabelPromises = landNos.map(landNo => this.getLandLabel(landNo));
     const [landLabels] = await Promise.all(landLabelPromises);
 
     // 所有權部
     // API02
-    const landOwnPromises = landNos.map(landNo => this.getLandOwn(landNo));
+    const landOwnPromises = landNos.map(landNo => this.getLandOwn(landNo, landRNos[landNo.NO]));
     const [landOwns] = await Promise.all(landOwnPromises);
-
     // API05
     const buildingOwns = await this.getBuildingOwn(buildNo);
 
@@ -474,7 +489,7 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
 
   // 取最新的就好
   // ========== 土地＆建物 所有權部 ==========
-  private async getLandOwn(landNo: { UNIT: string, SEC: string, NO: string}) {
+  private async getLandOwn(landNo: { UNIT: string, SEC: string, NO: string}, RNos: string[]) {
     let data = [
       {
           "UNIT": "AC",
@@ -585,7 +600,6 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
     const landOwn = data[0].LANDOWNERSHIP;
 
     const res = landOwn.map(val => {
-
       const dlPrice = Math.round(+val.DLPRICE / 0.3025 * 100) / 100;
       const ltPrice = val.LTPRICE.map(item => {
         return {
@@ -593,8 +607,6 @@ export class BuildingService extends DatabaseService implements OnModuleInit {
           LTVALUE: Math.round(+item.LTVALUE / 0.3025 * 100) / 100
         }
       })
-
-
       // OTHERREG
       return {
         // 土地持分資訊
